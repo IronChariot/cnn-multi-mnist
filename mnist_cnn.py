@@ -3,30 +3,77 @@ Convolutional Neural Network code, experiment to see how well we can handle inpu
 and if we can get the order in which the labelled images appear in the long input image.
 
 Code adapted from Aymeric Damien's CNN Tensorflow example (https://github.com/aymericdamien/TensorFlow-Examples/)
-TO DO: Make the required changes!
+Uses data import code from https://indico.io/blog/tensorflow-data-inputs-part1-placeholders-protobufs-queues/
+
+First, we'll train the network to recognise MNIST digits in the middle of long (wide) images
+Second, we'll continue to train the same network with MNIST digits in random locations in long images
+Finally, we'll continue to train the same network with multiple random MNIST digits in random locations
+
 """
 
 import tensorflow as tf
 
-# Import MINST data
-from tensorflow.examples.tutorials.mnist import input_data
-mnist = input_data.read_data_sets("/tmp/data/", one_hot=True)
+
+HEIGHT = 28
+LENGTH = 168
+
+
+def read_and_decode_single_example(filename):
+    # first construct a queue containing a list of filenames.
+    # this lets a user split up their dataset in multiple files to keep
+    # size down
+    filename_queue = tf.train.string_input_producer([filename], num_epochs=None)
+    # Unlike the TFRecordWriter, the TFRecordReader is symbolic
+    reader = tf.TFRecordReader()
+    # One can read a single serialized example from a filename
+    # serialized_example is a Tensor of type string.
+    _, serialized_example = reader.read(filename_queue)
+    # The serialized example is converted back to actual values.
+    # One needs to describe the format of the objects to be returned
+    features = tf.parse_single_example(
+        serialized_example,
+        features={
+            # We know the length of both fields. If not the
+            # tf.VarLenFeature could be used
+            'label': tf.FixedLenFeature([10], tf.int64),
+            'image': tf.FixedLenFeature([4704], tf.int64)
+        })
+    # now return the converted data
+    label = tf.cast(features['label'], tf.float32)
+    image = tf.cast(features['image'], tf.float32)
+    return label, image
+
+# get single examples
+label, image = read_and_decode_single_example("train_mnist_single.tfrecords")
+# groups examples into batches randomly
+images_batch, labels_batch = tf.train.shuffle_batch(
+    [image, label], batch_size=128,
+    capacity=2000,
+    min_after_dequeue=1000)
+
+# get single test example
+test_label, test_image = read_and_decode_single_example("test_mnist_single.tfrecords")
+# groups examples into batches randomly
+test_images_batch, test_labels_batch = tf.train.shuffle_batch(
+    [test_image, test_label], batch_size=256,
+    capacity=2000,
+    min_after_dequeue=1000)
 
 # Parameters
 learning_rate = 0.001
-training_iters = 200000
+training_iters = 2000
 batch_size = 128
 display_step = 10
 
 # Network Parameters
-n_input = 784 # MNIST data input (img shape: 28*28)
-n_classes = 10 # MNIST total classes (0-9 digits)
-dropout = 0.75 # Dropout, probability to keep units
+n_input = HEIGHT * LENGTH  # MNIST data input (img shape: 28*168)
+n_classes = 10  # MNIST total classes (0-9 digits)
+dropout = 0.75  # Dropout, probability to keep units
 
 # tf Graph input
 x = tf.placeholder(tf.float32, [None, n_input])
 y = tf.placeholder(tf.float32, [None, n_classes])
-keep_prob = tf.placeholder(tf.float32) #dropout (keep probability)
+keep_prob = tf.placeholder(tf.float32)  # dropout (keep probability)
 
 
 # Create some wrappers for simplicity
@@ -46,7 +93,7 @@ def maxpool2d(x, k=2):
 # Create model
 def conv_net(x, weights, biases, dropout):
     # Reshape input picture
-    x = tf.reshape(x, shape=[-1, 28, 28, 1])
+    x = tf.reshape(x, shape=[-1, HEIGHT, LENGTH, 1])
 
     # Convolution Layer
     conv1 = conv2d(x, weights['wc1'], biases['bc1'])
@@ -90,14 +137,14 @@ biases = {
 }
 
 # Construct model
-pred = conv_net(x, weights, biases, keep_prob)
+pred = conv_net(images_batch, weights, biases, keep_prob)
 
 # Define loss and optimizer
-cost = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(pred, y))
+cost = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(pred, labels_batch))
 optimizer = tf.train.AdamOptimizer(learning_rate=learning_rate).minimize(cost)
 
 # Evaluate model
-correct_pred = tf.equal(tf.argmax(pred, 1), tf.argmax(y, 1))
+correct_pred = tf.equal(tf.argmax(pred, 1), tf.argmax(labels_batch, 1))
 accuracy = tf.reduce_mean(tf.cast(correct_pred, tf.float32))
 
 # Initializing the variables
@@ -106,17 +153,18 @@ init = tf.initialize_all_variables()
 # Launch the graph
 with tf.Session() as sess:
     sess.run(init)
+    tf.train.start_queue_runners(sess=sess)
     step = 1
     # Keep training until reach max iterations
     while step * batch_size < training_iters:
-        batch_x, batch_y = mnist.train.next_batch(batch_size)
+        # batch_x, batch_y = mnist.train.next_batch(batch_size)
         # Run optimization op (backprop)
-        sess.run(optimizer, feed_dict={x: batch_x, y: batch_y,
+        sess.run(optimizer, feed_dict={x: images_batch, y: labels_batch,
                                        keep_prob: dropout})
         if step % display_step == 0:
             # Calculate batch loss and accuracy
-            loss, acc = sess.run([cost, accuracy], feed_dict={x: batch_x,
-                                                              y: batch_y,
+            loss, acc = sess.run([cost, accuracy], feed_dict={x: images_batch,
+                                                              y: labels_batch,
                                                               keep_prob: 1.})
             print "Iter " + str(step*batch_size) + ", Minibatch Loss= " + \
                   "{:.6f}".format(loss) + ", Training Accuracy= " + \
@@ -126,6 +174,6 @@ with tf.Session() as sess:
 
     # Calculate accuracy for 256 mnist test images
     print "Testing Accuracy:", \
-        sess.run(accuracy, feed_dict={x: mnist.test.images[:256],
-                                      y: mnist.test.labels[:256],
+        sess.run(accuracy, feed_dict={x: test_images_batch,
+                                      y: test_labels_batch,
                                       keep_prob: 1.})

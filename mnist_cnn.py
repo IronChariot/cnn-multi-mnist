@@ -12,10 +12,15 @@ Finally, we'll continue to train the same network with multiple random MNIST dig
 """
 
 import tensorflow as tf
+import os
 
 
 HEIGHT = 28
-LENGTH = 168
+LENGTH = 28
+BATCH_SIZE = 128
+DATA_PATH = "./base_mnist"
+TRAIN_FILENAME = "train_mnist_small_single.tfrecords"
+TEST_FILENAME = "test_mnist_small_single.tfrecords"
 
 
 def read_and_decode_single_example(filename):
@@ -36,33 +41,34 @@ def read_and_decode_single_example(filename):
             # We know the length of both fields. If not the
             # tf.VarLenFeature could be used
             'label': tf.FixedLenFeature([10], tf.int64),
-            'image': tf.FixedLenFeature([4704], tf.int64)
+            'image': tf.FixedLenFeature([HEIGHT * LENGTH], tf.int64)
         })
     # now return the converted data
     label = tf.cast(features['label'], tf.float32)
-    image = tf.cast(features['image'], tf.float32)
+    image = tf.cast(features['image'], tf.float32) / 255.0
     return label, image
 
+
 # get single examples
-label, image = read_and_decode_single_example("train_mnist_single.tfrecords")
+label, image = read_and_decode_single_example(os.path.join(DATA_PATH, TRAIN_FILENAME))
 # groups examples into batches randomly
 images_batch, labels_batch = tf.train.shuffle_batch(
-    [image, label], batch_size=128,
+    [image, label], batch_size=BATCH_SIZE,
     capacity=2000,
     min_after_dequeue=1000)
 
 # get single test example
-test_label, test_image = read_and_decode_single_example("test_mnist_single.tfrecords")
+test_label, test_image = read_and_decode_single_example(os.path.join(DATA_PATH, TEST_FILENAME))
 # groups examples into batches randomly
 test_images_batch, test_labels_batch = tf.train.shuffle_batch(
-    [test_image, test_label], batch_size=256,
+    [test_image, test_label], batch_size=BATCH_SIZE,
     capacity=2000,
     min_after_dequeue=1000)
 
 # Parameters
 learning_rate = 0.001
-training_iters = 2000
-batch_size = 128
+training_iters = 100000
+batch_size = BATCH_SIZE
 display_step = 10
 
 # Network Parameters
@@ -71,8 +77,8 @@ n_classes = 10  # MNIST total classes (0-9 digits)
 dropout = 0.75  # Dropout, probability to keep units
 
 # tf Graph input
-x = tf.placeholder(tf.float32, [None, n_input])
-y = tf.placeholder(tf.float32, [None, n_classes])
+x = images_batch
+y = labels_batch
 keep_prob = tf.placeholder(tf.float32)  # dropout (keep probability)
 
 
@@ -98,17 +104,17 @@ def conv_net(x, weights, biases, dropout):
     # Convolution Layer
     conv1 = conv2d(x, weights['wc1'], biases['bc1'])
     # Max Pooling (down-sampling)
-    conv1 = maxpool2d(conv1, k=2)
+    pool1 = maxpool2d(conv1, k=2)
 
     # Convolution Layer
-    conv2 = conv2d(conv1, weights['wc2'], biases['bc2'])
+    conv2 = conv2d(pool1, weights['wc2'], biases['bc2'])
     # Max Pooling (down-sampling)
-    conv2 = maxpool2d(conv2, k=2)
+    pool2 = maxpool2d(conv2, k=2)
 
     # Fully connected layer
     # Reshape conv2 output to fit fully connected layer input
-    fc1 = tf.reshape(conv2, [-1, weights['wd1'].get_shape().as_list()[0]])
-    fc1 = tf.add(tf.matmul(fc1, weights['wd1']), biases['bd1'])
+    reshaped_pool2 = tf.reshape(pool2, [-1, weights['wd1'].get_shape().as_list()[0]])
+    fc1 = tf.add(tf.matmul(reshaped_pool2, weights['wd1']), biases['bd1'])
     fc1 = tf.nn.relu(fc1)
     # Apply Dropout
     fc1 = tf.nn.dropout(fc1, dropout)
@@ -124,7 +130,7 @@ weights = {
     # 5x5 conv, 32 inputs, 64 outputs
     'wc2': tf.Variable(tf.random_normal([5, 5, 32, 64])),
     # fully connected, 7*7*64 inputs, 1024 outputs
-    'wd1': tf.Variable(tf.random_normal([7*7*64, 1024])),
+    'wd1': tf.Variable(tf.random_normal([(HEIGHT // 4) * (LENGTH // 4) * 64, 1024])),
     # 1024 inputs, 10 outputs (class prediction)
     'out': tf.Variable(tf.random_normal([1024, n_classes]))
 }
@@ -137,14 +143,14 @@ biases = {
 }
 
 # Construct model
-pred = conv_net(images_batch, weights, biases, keep_prob)
+pred = conv_net(x, weights, biases, keep_prob)
 
 # Define loss and optimizer
-cost = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(pred, labels_batch))
+cost = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(pred, y))
 optimizer = tf.train.AdamOptimizer(learning_rate=learning_rate).minimize(cost)
 
 # Evaluate model
-correct_pred = tf.equal(tf.argmax(pred, 1), tf.argmax(labels_batch, 1))
+correct_pred = tf.equal(tf.argmax(pred, 1), tf.argmax(y, 1))
 accuracy = tf.reduce_mean(tf.cast(correct_pred, tf.float32))
 
 # Initializing the variables
@@ -159,14 +165,11 @@ with tf.Session() as sess:
     while step * batch_size < training_iters:
         # batch_x, batch_y = mnist.train.next_batch(batch_size)
         # Run optimization op (backprop)
-        sess.run(optimizer, feed_dict={x: images_batch, y: labels_batch,
-                                       keep_prob: dropout})
+        sess.run(optimizer, feed_dict={keep_prob: dropout})
         if step % display_step == 0:
             # Calculate batch loss and accuracy
-            loss, acc = sess.run([cost, accuracy], feed_dict={x: images_batch,
-                                                              y: labels_batch,
-                                                              keep_prob: 1.})
-            print "Iter " + str(step*batch_size) + ", Minibatch Loss= " + \
+            loss, acc = sess.run([cost, accuracy], feed_dict={keep_prob: 1.})
+            print "Iter " + str(step * batch_size) + ", Minibatch Loss= " + \
                   "{:.6f}".format(loss) + ", Training Accuracy= " + \
                   "{:.5f}".format(acc)
         step += 1
@@ -174,6 +177,4 @@ with tf.Session() as sess:
 
     # Calculate accuracy for 256 mnist test images
     print "Testing Accuracy:", \
-        sess.run(accuracy, feed_dict={x: test_images_batch,
-                                      y: test_labels_batch,
-                                      keep_prob: 1.})
+        sess.run(accuracy, feed_dict={keep_prob: 1.})

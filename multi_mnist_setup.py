@@ -58,6 +58,41 @@ def load_mnist(dataset="training", digits=np.arange(10)):
     return images, labels
 
 
+def create_small_single_mnist(samples=60000, dataset="training"):
+    """ Create a dataset where a single MNIST digit is located in the middle of a long image. """
+    # Extract images and labels from base MNIST files
+    images, labels = load_mnist(dataset)
+    new_images = []
+    new_labels = []
+
+    if samples > len(images):
+        print "There aren't that many images in the MNIST {} dataset!".format(dataset)
+        return
+
+    # For however many samples...
+    for sample in range(samples):
+        # Create the new label (one hot encoding):
+        new_label = np.zeros([10])
+        new_label[labels[sample][0]] = 1.0
+        # Create the new image:
+        new_image = np.zeros([SIZE, SIZE])
+        start_position = 0
+
+        for row in range(SIZE):
+            for col in range(SIZE):
+                new_image[row][start_position + col] = images[sample][row][col]
+
+        new_image = new_image.flatten()
+
+        new_images.append(new_image)
+        new_labels.append(new_label)
+
+    new_images = np.array(new_images)
+    new_labels = np.array(new_labels)
+
+    return new_images, new_labels
+
+
 def create_single_mnist(samples=60000, dataset="training", noise=False):
     """ Create a dataset where a single MNIST digit is located in the middle of a long image. """
     # Extract images and labels from base MNIST files
@@ -189,9 +224,9 @@ def create_rand_multi_mnist(samples=60000, dataset="training", noise=False):
 if __name__ == "__main__":
     random.seed(1234)
 
-    images, labels = create_single_mnist(dataset="testing", samples=10000)
+    images, labels = create_small_single_mnist(dataset="training", samples=60000)
 
-    writer = tf.python_io.TFRecordWriter(os.path.join(DATA_PATH, "test_mnist_single.tfrecords"))
+    writer = tf.python_io.TFRecordWriter(os.path.join(DATA_PATH, "train_mnist_small_single.tfrecords"))
     for example_id in range(images.shape[0]):
         features = images[example_id]
         label = labels[example_id]

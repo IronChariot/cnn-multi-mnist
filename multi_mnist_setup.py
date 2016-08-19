@@ -210,7 +210,7 @@ def create_rand_multi_mnist(samples=60000, dataset="training", noise=False):
                 for col in range(SIZE):
                     new_image[row][start_pos + col] = images[index][row][col]
 
-        new_image = new_image.flatten()
+        #new_image = new_image.flatten()
 
         new_images.append(new_image)
         new_labels.append(new_label)
@@ -224,9 +224,9 @@ def create_rand_multi_mnist(samples=60000, dataset="training", noise=False):
 if __name__ == "__main__":
     random.seed(1234)
 
-    images, labels = create_small_single_mnist(dataset="training", samples=60000)
+    images, labels = create_rand_single_mnist(dataset="training", samples=60000)
 
-    writer = tf.python_io.TFRecordWriter(os.path.join(DATA_PATH, "train_mnist_small_single.tfrecords"))
+    writer = tf.python_io.TFRecordWriter(os.path.join(DATA_PATH, "train_mnist_rand_single.tfrecords"))
     for example_id in range(images.shape[0]):
         features = images[example_id]
         label = labels[example_id]

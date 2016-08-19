@@ -16,11 +16,13 @@ import os
 
 
 HEIGHT = 28
-LENGTH = 28
-BATCH_SIZE = 128
+LENGTH = 168
+BATCH_SIZE = 96
 DATA_PATH = "./base_mnist"
-TRAIN_FILENAME = "train_mnist_small_single.tfrecords"
-TEST_FILENAME = "test_mnist_small_single.tfrecords"
+MODEL_PATH = "./models"
+TRAIN_FILENAME = "train_mnist_rand_single.tfrecords"
+# TEST_FILENAME = "train_mnist_rand_single.tfrecords"
+RESTORE_MODEL = True
 
 
 def read_and_decode_single_example(filename):
@@ -41,7 +43,7 @@ def read_and_decode_single_example(filename):
             # We know the length of both fields. If not the
             # tf.VarLenFeature could be used
             'label': tf.FixedLenFeature([10], tf.int64),
-            'image': tf.FixedLenFeature([HEIGHT * LENGTH], tf.int64)
+            'image': tf.FixedLenFeature([HEIGHT, LENGTH], tf.int64)
         })
     # now return the converted data
     label = tf.cast(features['label'], tf.float32)
@@ -58,21 +60,21 @@ images_batch, labels_batch = tf.train.shuffle_batch(
     min_after_dequeue=1000)
 
 # get single test example
-test_label, test_image = read_and_decode_single_example(os.path.join(DATA_PATH, TEST_FILENAME))
-# groups examples into batches randomly
-test_images_batch, test_labels_batch = tf.train.shuffle_batch(
-    [test_image, test_label], batch_size=BATCH_SIZE,
-    capacity=2000,
-    min_after_dequeue=1000)
+# test_label, test_image = read_and_decode_single_example(os.path.join(DATA_PATH, TEST_FILENAME))
+# # groups examples into batches randomly
+# test_images_batch, test_labels_batch = tf.train.shuffle_batch(
+#     [test_image, test_label], batch_size=BATCH_SIZE,
+#     capacity=2000,
+#     min_after_dequeue=1000)
 
 # Parameters
-learning_rate = 0.001
-training_iters = 100000
+learning_rate = 0.0001
+training_iters = 500000
 batch_size = BATCH_SIZE
 display_step = 10
 
 # Network Parameters
-n_input = HEIGHT * LENGTH  # MNIST data input (img shape: 28*168)
+n_input = HEIGHT * LENGTH  # MNIST data input (img shape e.g.: 28*168)
 n_classes = 10  # MNIST total classes (0-9 digits)
 dropout = 0.75  # Dropout, probability to keep units
 
@@ -126,19 +128,19 @@ def conv_net(x, weights, biases, dropout):
 # Store layers weight & bias
 weights = {
     # 5x5 conv, 1 input, 32 outputs
-    'wc1': tf.Variable(tf.random_normal([5, 5, 1, 32])),
+    'wc1': tf.Variable(tf.random_normal([5, 5, 1, 64])),
     # 5x5 conv, 32 inputs, 64 outputs
-    'wc2': tf.Variable(tf.random_normal([5, 5, 32, 64])),
+    'wc2': tf.Variable(tf.random_normal([5, 5, 64, 128])),
     # fully connected, 7*7*64 inputs, 1024 outputs
-    'wd1': tf.Variable(tf.random_normal([(HEIGHT // 4) * (LENGTH // 4) * 64, 1024])),
+    'wd1': tf.Variable(tf.random_normal([(HEIGHT // 4) * (LENGTH // 4) * 128, 2048])),
     # 1024 inputs, 10 outputs (class prediction)
-    'out': tf.Variable(tf.random_normal([1024, n_classes]))
+    'out': tf.Variable(tf.random_normal([2048, n_classes]))
 }
 
 biases = {
-    'bc1': tf.Variable(tf.random_normal([32])),
-    'bc2': tf.Variable(tf.random_normal([64])),
-    'bd1': tf.Variable(tf.random_normal([1024])),
+    'bc1': tf.Variable(tf.random_normal([64])),
+    'bc2': tf.Variable(tf.random_normal([128])),
+    'bd1': tf.Variable(tf.random_normal([2048])),
     'out': tf.Variable(tf.random_normal([n_classes]))
 }
 
@@ -146,26 +148,32 @@ biases = {
 pred = conv_net(x, weights, biases, keep_prob)
 
 # Define loss and optimizer
-cost = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(pred, y))
+cost = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(pred, y))
 optimizer = tf.train.AdamOptimizer(learning_rate=learning_rate).minimize(cost)
 
 # Evaluate model
 correct_pred = tf.equal(tf.argmax(pred, 1), tf.argmax(y, 1))
 accuracy = tf.reduce_mean(tf.cast(correct_pred, tf.float32))
 
+saver = tf.train.Saver()
+
 # Initializing the variables
 init = tf.initialize_all_variables()
 
 # Launch the graph
-with tf.Session() as sess:
-    sess.run(init)
+gpu_options = tf.GPUOptions(per_process_gpu_memory_fraction=0.7)
+with tf.Session(config=tf.ConfigProto(gpu_options=gpu_options)) as sess:
+    if RESTORE_MODEL:
+        saver.restore(sess, MODEL_PATH + "/model.ckpt")
+    else:
+        sess.run(init)
     tf.train.start_queue_runners(sess=sess)
     step = 1
     # Keep training until reach max iterations
     while step * batch_size < training_iters:
         # batch_x, batch_y = mnist.train.next_batch(batch_size)
         # Run optimization op (backprop)
-        sess.run(optimizer, feed_dict={keep_prob: dropout})
+        sess.run(optimizer, feed_dict={keep_prob: 1.0})
         if step % display_step == 0:
             # Calculate batch loss and accuracy
             loss, acc = sess.run([cost, accuracy], feed_dict={keep_prob: 1.})
@@ -174,6 +182,7 @@ with tf.Session() as sess:
                   "{:.5f}".format(acc)
         step += 1
     print "Optimization Finished!"
+    saver.save(sess, MODEL_PATH + '/model.ckpt')
 
     # Calculate accuracy for 256 mnist test images
     print "Testing Accuracy:", \
